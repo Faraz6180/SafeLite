@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "safelite"
+version = "0.1.0"
+description = "A research project foundation for safe and structured autonomy workflows"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{ name = "SafeLite Contributors" }]
+license = { text = "MIT" }
+dependencies = [
+  "python-dotenv>=1.2.0",
+  "groq>=1.6.0",
+  "requests>=2.34.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

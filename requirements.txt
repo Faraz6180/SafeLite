@@ -1,15 +1,33 @@
-# Runtime dependencies for SafeLite
+# SafeLite Core Dependencies
+# Environment & Simulation
 metaworld>=3.1.1
 mujoco>=3.3.0
 gymnasium>=1.3.0
+
+# Numerical & Scientific
 numpy>=2.0.0
 scipy>=1.18.0
 packaging>=24.0
+
+# Data Validation & Serialization
 pydantic>=2.0.0
-pytest>=8.0.0
-python-dotenv>=1.2.0
+
+# LLM & API Clients
 groq>=1.6.0
 requests>=2.34.0
+python-dotenv>=1.2.0
+
+# Experiment Orchestration (NEW for M1)
+pyyaml>=6.0.1          # For loading configs/experiment.yaml
+pandas>=2.2.2          # For dataframes (already in your list)
+pyarrow>=17.0.0        # For Parquet I/O (lightning-fast experiment logs)
+tqdm>=4.66.0           # For progress bars in experiment_runner.py
+
+# Testing & Development
+pytest>=8.0.0
+
+# Optional: Streamlit Dashboard (keep if you use it)
 streamlit>=1.38.0
-pandas>=2.2.0
 plotly>=5.24.0
+
+

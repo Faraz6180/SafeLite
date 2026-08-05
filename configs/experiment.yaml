@@ -1,0 +1,31 @@
+# SafeLite Experiment Configuration - TEST RUN (Dry Run)
+experiment:
+  name: "safelite_test_dryrun"
+  random_seed_base: 42
+  num_seeds: 2                # ONLY 2 seeds for a 30-second test
+  action_horizon: 200
+
+# Test only ONE task to see the loop fire immediately
+tasks:
+  - "pick-place-v3"
+
+baselines:
+  B0:
+    description: "Direct Action (No Safety, No Correction)"
+    skip_safety: true
+    skip_correction: true
+  B3:
+    description: "SafeLite (Verifier + Correction)"
+    skip_safety: false
+    skip_correction: false
+
+# IMPORTANT: Set to "mock" to see results instantly without API keys
+llm:
+  provider: "mock"            # <-- THIS ENSURES NO API CALLS
+  model: "mock-model"
+  temperature: 0.0
+  max_tokens: 512
+
+logging:
+  raw_data_dir: "results/raw"
+  log_level: "INFO"

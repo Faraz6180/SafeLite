@@ -1,50 +1,38 @@
-"""Execution logging utilities.
-
-The logging module writes detailed execution information to the console and to
-files under the project logs directory.
 """
-
-from __future__ import annotations
-
-import logging
+Execution Logger - Structured logging for experiments.
+"""
+import pandas as pd
 from pathlib import Path
-from typing import List
+from typing import Dict, Any
+from executor.models import ExecutionResult
 
 
 class ExecutionLogger:
-    """Create and manage execution logs for the engine."""
-
-    def __init__(self, log_dir: str | None = None) -> None:
-        self.log_dir = Path(log_dir or "logs")
+    def __init__(self, log_dir: str = "logs"):
+        self.log_dir = Path(log_dir)
         self.log_dir.mkdir(parents=True, exist_ok=True)
-        self.logger = logging.getLogger("safelite.executor")
-        self.logger.setLevel(logging.INFO)
-        self.logger.handlers.clear()
+        self.raw_results = []
 
-        formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
-        file_handler = logging.FileHandler(self.log_dir / "execution.log", encoding="utf-8")
-        file_handler.setFormatter(formatter)
-        self.logger.addHandler(file_handler)
+    def log_execution(self, result: ExecutionResult, metadata: Dict[str, Any]):
+        row = {
+            "timestamp": pd.Timestamp.now().isoformat(),
+            "success": result.success,
+            "steps_taken": result.steps_taken,
+            "error_message": result.error_message if not result.success else "",
+            "plan_json": result.plan.json() if result.plan else None,
+            "task": metadata.get("task", "unknown"),
+            "seed": metadata.get("seed", -1),
+            "baseline": metadata.get("baseline", "unknown"),
+            "instruction": metadata.get("instruction", ""),
+        }
+        self.raw_results.append(row)
 
-        stream_handler = logging.StreamHandler()
-        stream_handler.setFormatter(formatter)
-        self.logger.addHandler(stream_handler)
-
-    def info(self, message: str, *args: object) -> None:
-        """Log an informational message."""
-        self.logger.info(message, *args)
-
-    def warning(self, message: str, *args: object) -> None:
-        """Log a warning message."""
-        self.logger.warning(message, *args)
-
-    def error(self, message: str, *args: object) -> None:
-        """Log an error message."""
-        self.logger.error(message, *args)
-
-    def export_logs(self) -> List[str]:
-        """Return the log contents as strings."""
-        log_path = self.log_dir / "execution.log"
-        if not log_path.exists():
-            return []
-        return log_path.read_text(encoding="utf-8").splitlines()
+    def save_to_parquet(self, output_path: str = "results/raw/experiment.parquet"):
+        if not self.raw_results:
+            print("No results to save.")
+            return
+        df = pd.DataFrame(self.raw_results)
+        out_path = Path(output_path)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        df.to_parquet(out_path, index=False)
+        print(f"Saved {len(df)} rows to {out_path}")

@@ -30,4 +30,5 @@ pytest>=8.0.0
 streamlit>=1.38.0
 plotly>=5.24.0
 
-
+# Statistics & Analysis
+scipy>=1.10.0

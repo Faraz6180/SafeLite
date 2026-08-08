@@ -1,95 +1,101 @@
-"""OpenRouter provider implementation using the official HTTP API."""
+"""
+OpenRouter LLM provider implementation.
+"""
 
 from __future__ import annotations
 
 import json
-from typing import Any
-
-from planner.models import ActionPlan
+import os
+from typing import Any, Dict, Optional
 
 from .base import BaseLLMProvider, LLMProviderError
 from .config import LLMConfig
-from .prompt_builder import PromptBuilder
-from .response_parser import ResponseParser
+
+try:
+    import requests
+except ImportError:
+    requests = None
 
 
 class OpenRouterProvider(BaseLLMProvider):
-    """Generate plans using the OpenRouter chat completions API."""
+    """LLM provider using OpenRouter API."""
 
-    def __init__(self, config: LLMConfig | None = None, api_key: str | None = None, http_client: Any | None = None) -> None:
-        cfg = config or LLMConfig(provider="openrouter")
-        cfg.api_key = api_key or cfg.api_key
-        super().__init__(cfg)
-        self.http_client = http_client or self._default_http_client()
-        self.prompt_builder = PromptBuilder()
-        self.parser = ResponseParser()
+    def __init__(self, config: LLMConfig) -> None:
+        self.config = config
+        self.api_key = config.api_key
+        self.base_url = "https://openrouter.ai/api/v1/chat/completions"
 
-    def generate_plan(self, instruction: str) -> ActionPlan:
-        if not self.config.api_key:
-            raise LLMProviderError("OpenRouter API key is missing.")
+    def generate_plan(self, instruction: str) -> Dict[str, Any]:
+        """Generate a plan using OpenRouter."""
+        if not self.api_key:
+            raise LLMProviderError("OpenRouter API key not set.")
+        if requests is None:
+            raise LLMProviderError("requests module not installed.")
 
-        prompt = self.prompt_builder.build(instruction)
+        prompt = self._build_prompt(instruction)
+
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json"
+        }
+
         payload = {
-            "model": self.config.model_name or "openai/gpt-4o-mini",
+            "model": self.config.model_name or "meta-llama/llama-3.1-8b-instruct",
             "messages": [
-                {"role": "system", "content": prompt.system_prompt},
-                {"role": "developer", "content": prompt.developer_prompt},
-                {"role": "user", "content": prompt.user_prompt},
+                {"role": "system", "content": "You are a robot planner. Return a JSON object with 'goal' and 'actions'."},
+                {"role": "user", "content": prompt}
             ],
             "temperature": self.config.temperature,
             "max_tokens": self.config.max_tokens,
+            "response_format": {"type": "json_object"}
         }
-        try:
-            response = self.http_client.post_json(
-                "https://openrouter.ai/api/v1/chat/completions",
-                {"Authorization": f"Bearer {self.config.api_key}", "Content-Type": "application/json"},
-                payload,
-            )
-        except TimeoutError as exc:
-            raise LLMProviderError("OpenRouter request timed out.") from exc
-        except Exception as exc:
-            raise LLMProviderError(f"OpenRouter request failed: {exc}") from exc
-
-        if isinstance(response, dict) and "error" in response:
-            raise LLMProviderError(f"OpenRouter provider error: {response['error']}")
 
         try:
-            content = response["choices"][0]["message"]["content"]
-        except Exception as exc:
-            raise LLMProviderError("OpenRouter returned an unexpected response shape.") from exc
+            response = requests.post(self.base_url, headers=headers, json=payload, timeout=self.config.timeout)
+            response.raise_for_status()
+            data = response.json()
+            raw_text = data['choices'][0]['message']['content']
+            parsed = json.loads(raw_text)
+            return self.validate_response(parsed)
+        except Exception as e:
+            raise LLMProviderError(f"OpenRouter generation failed: {e}")
 
-        return self.parser.parse(content)
+    def validate_response(self, raw_response: Dict[str, Any]) -> Dict[str, Any]:
+        """Validate the raw response."""
+        if not isinstance(raw_response, dict):
+            raise LLMProviderError("Response is not a dictionary.")
+        if 'goal' not in raw_response:
+            raise LLMProviderError("Missing 'goal' in response.")
+        if 'actions' not in raw_response:
+            raise LLMProviderError("Missing 'actions' in response.")
+        if not isinstance(raw_response['actions'], list):
+            raise LLMProviderError("'actions' must be a list.")
+        return raw_response
 
-    def health_check(self) -> bool:
-        if not self.config.api_key:
-            return False
-        try:
-            self.http_client.post_json(
-                "https://openrouter.ai/api/v1/chat/completions",
-                {"Authorization": f"Bearer {self.config.api_key}", "Content-Type": "application/json"},
-                {"model": self.config.model_name or "openai/gpt-4o-mini", "messages": [{"role": "user", "content": "hi"}], "max_tokens": 5},
-            )
-        except Exception:
-            return False
-        return True
+    def _build_prompt(self, instruction: str) -> str:
+        """Build the prompt for OpenRouter."""
+        return f"""
+You are a robot planner for a Meta-World manipulation environment.
 
-    def validate_response(self, payload: Any) -> ActionPlan:
-        return self.parser.parse(payload)
+Given the instruction: "{instruction}"
 
-    class _DefaultHTTPClient:
-        def post_json(self, url: str, headers: dict[str, str], payload: dict[str, object]) -> object:
-            import urllib.request
-            import urllib.error
+Return a JSON object with:
+- "goal": a string describing the overall goal.
+- "actions": a list of objects, each with:
+    - "action_type": one of ["move_to", "pick", "place", "open", "close", "push"]
+    - "target_object": the name of the object (e.g., "red_block", "green_platform")
+    - "gripper": one of ["open", "closed", "hold"] (optional)
 
-            data = json.dumps(payload).encode("utf-8")
-            req = urllib.request.Request(url, data=data, headers=headers, method="POST")
-            try:
-                with urllib.request.urlopen(req, timeout=30) as response:
-                    return json.load(response)
-            except urllib.error.HTTPError as exc:
-                return {"error": {"message": exc.read().decode("utf-8")}}
-            except urllib.error.URLError as exc:
-                raise TimeoutError(str(exc.reason)) from exc
+Example:
+{{
+    "goal": "pick up the red block and place it on the green platform",
+    "actions": [
+        {{"action_type": "move_to", "target_object": "red_block", "gripper": "open"}},
+        {{"action_type": "pick", "target_object": "red_block", "gripper": "closed"}},
+        {{"action_type": "move_to", "target_object": "green_platform", "gripper": "hold"}},
+        {{"action_type": "place", "target_object": "green_platform", "gripper": "open"}}
+    ]
+}}
 
-    def _default_http_client(self) -> Any:
-        return self._DefaultHTTPClient()
+Return only the JSON object, no extra text.
+"""

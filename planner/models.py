@@ -1,65 +1,30 @@
-"""Pydantic models for structured robot action plans.
-
-These models define the schema used by the planner agent when converting a
-natural-language instruction into a structured action plan.
 """
-
-from __future__ import annotations
-
-from typing import List
-
+Data models for action plans.
+"""
+from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field, field_validator
 
 
 class Action(BaseModel):
-    """A single atomic action in a robot manipulation plan.
+    """A single action in a plan."""
+    action_type: str = Field(..., description="Type of action: move_to, pick, place, open, close, push")
+    target_object: str = Field(..., description="Name of the target object")
+    target_location: Optional[str] = Field(None, description="Optional target location")
+    gripper: str = Field("hold", description="Gripper state: open, close, hold")
+    reason: Optional[str] = Field(None, description="Reason for the action")
 
-    Attributes
-    ----------
-    action_type: str
-        The type of manipulation action to perform.
-    target_object: str
-        The object that the action should affect.
-    target_location: str
-        The destination or location associated with the action.
-    gripper: str
-        The gripper state relative to the action.
-    reason: str
-        A brief explanation for the action.
-    """
-
-    action_type: str = Field(..., min_length=1)
-    target_object: str = Field(..., min_length=1)
-    target_location: str = Field(..., min_length=1)
-    gripper: str = Field(..., min_length=1)
-    reason: str = Field(..., min_length=1)
-
-    @field_validator("action_type")
+    @field_validator('gripper')
     @classmethod
-    def validate_action_type(cls, value: str) -> str:
-        """Normalize the action type and ensure it is non-empty."""
-        return value.strip().lower()
-
-    @field_validator("gripper")
-    @classmethod
-    def validate_gripper(cls, value: str) -> str:
-        """Normalize the gripper command and ensure it is non-empty."""
-        normalized = value.strip().lower()
-        if normalized not in {"open", "close", "hold"}:
-            raise ValueError("gripper must be one of: open, close, hold")
-        return normalized
+    def validate_gripper(cls, v: str) -> str:
+        allowed = {"open", "close", "hold", "closed"}
+        if v in allowed:
+            # Normalize 'closed' to 'close'
+            return "close" if v == "closed" else v
+        raise ValueError(f"gripper must be one of: open, close, hold (got {v})")
 
 
 class ActionPlan(BaseModel):
-    """A complete structured action plan for a manipulation task.
-
-    Attributes
-    ----------
-    goal: str
-        The high-level manipulation goal.
-    actions: List[Action]
-        The ordered sequence of actions that fulfill the goal.
-    """
-
-    goal: str = Field(..., min_length=1)
-    actions: List[Action] = Field(default_factory=list)
+    """A complete action plan."""
+    goal: str = Field(..., description="Overall goal of the plan")
+    actions: List[Action] = Field(..., description="List of actions")
+    raw_response: Optional[Dict[str, Any]] = Field(None, description="Raw LLM response")

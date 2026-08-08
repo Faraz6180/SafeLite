@@ -1,4 +1,4 @@
-"""Planner agent for creating structured action plans.
+""""Planner agent for creating structured action plans.
 
 The planner agent uses a configurable LLM provider abstraction to convert
 natural-language instructions into structured plans for downstream research
@@ -12,7 +12,6 @@ from typing import Any
 
 from llm.base import BaseLLMProvider, LLMProviderError
 from llm.config import LLMConfig, load_config
-from llm.factory import create_provider
 
 from .models import Action, ActionPlan
 from .parser import ActionPlanParser, ActionPlanParseError
@@ -26,36 +25,39 @@ class PlannerAgent:
         self._parser = ActionPlanParser()
         self._validator = PlanValidator()
         self._config = config or load_config()
-        self._provider = provider or create_provider(self._config)
+        self._provider = provider
 
     def create_plan(self, instruction: str) -> ActionPlan:
         """Create a structured action plan from a natural-language instruction."""
         if not instruction or not instruction.strip():
             raise ValueError("Instruction cannot be empty.")
 
-        if isinstance(self._provider, BaseLLMProvider):
-            try:
-                plan = self._provider.generate_plan(instruction)
-            except LLMProviderError:
-                plan = self._provider.validate_response(
-                    {
-                        "goal": instruction.strip(),
-                        "actions": [
-                            {
-                                "action_type": "move",
-                                "target_object": "object",
-                                "target_location": "workspace",
-                                "gripper": "hold",
-                                "reason": "Fallback plan generated after provider failure.",
-                            }
-                        ],
-                    }
-                )
+        if self._provider is None:
+            raise RuntimeError("PlannerAgent requires a valid provider implementation.")
 
-            self.validate_plan(plan)
-            return plan
+        # Generate the plan
+        raw_response = self._provider.generate_plan(instruction)
 
-        raise RuntimeError("PlannerAgent requires a valid provider implementation.")
+        # ===== DEBUG: Print the raw LLM response =====
+        print("=" * 60)
+        print("LLM RAW RESPONSE:")
+        print(raw_response)
+        print("=" * 60)
+        # =============================================
+
+        # Validate the plan
+        validated = self._provider.validate_response(raw_response)
+
+        # Parse into ActionPlan (import locally to avoid circular issues)
+        from .models import ActionPlan
+        actions_list = validated.get('actions', [])
+        plan = ActionPlan(
+            goal=validated.get('goal', ''),
+            actions=actions_list,
+            raw_response=raw_response
+        )
+        self.validate_plan(plan)
+        return plan
 
     def validate_plan(self, plan: ActionPlan) -> None:
         """Validate a plan and raise a meaningful exception on failure."""

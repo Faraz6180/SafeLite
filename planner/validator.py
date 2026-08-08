@@ -1,69 +1,46 @@
-"""Validation rules for planner-generated action plans.
-
-The validator enforces constraints on the structure and semantics of an
-ActionPlan before it is accepted by the planner agent.
 """
+Plan validator for SafeLite.
+Validates the structure and semantics of an ActionPlan.
+"""
+from typing import List, Set
+from planner.models import ActionPlan, Action
 
-from __future__ import annotations
 
-from .models import ActionPlan
-
-
-class PlanValidationError(ValueError):
-    """Raised when a plan violates the planner validation rules."""
+class PlanValidationError(Exception):
+    """Raised when a plan fails validation."""
+    pass
 
 
 class PlanValidator:
-    """Validate the semantics of an action plan."""
+    """Validate an ActionPlan for correctness and safety."""
 
-    VALID_ACTION_TYPES = {"pick", "place", "move", "open", "close", "hold"}
-    VALID_GRIPPERS = {"open", "close", "hold"}
+    # Define allowed action types
+    ALLOWED_ACTION_TYPES = {"move_to", "pick", "place", "open", "close", "push", "move"}
 
-    @classmethod
-    def validate(cls, plan: ActionPlan) -> None:
-        """Validate a plan instance.
-
-        Parameters
-        ----------
-        plan: ActionPlan
-            The plan to validate.
-
-        Raises
-        ------
-        PlanValidationError
-            If the plan violates any validation rule.
+    def validate(self, plan: ActionPlan) -> None:
         """
-        if not plan.goal or not plan.goal.strip():
-            raise PlanValidationError("Plan goal cannot be empty.")
+        Validate the plan.
 
+        Args:
+            plan: ActionPlan to validate.
+
+        Raises:
+            PlanValidationError: If the plan is invalid.
+        """
         if not plan.actions:
-            raise PlanValidationError("Plan cannot contain no actions.")
+            raise PlanValidationError("Plan has no actions.")
 
-        seen_steps: set[tuple[str, str]] = set()
-        for index, action in enumerate(plan.actions):
-            if action.action_type not in cls.VALID_ACTION_TYPES:
+        for idx, action in enumerate(plan.actions):
+            # Check action type
+            if action.action_type not in self.ALLOWED_ACTION_TYPES:
                 raise PlanValidationError(
-                    f"Unknown action type at step {index + 1}: {action.action_type}"
+                    f"Unknown action type at step {idx + 1}: {action.action_type}"
                 )
 
-            if action.gripper not in cls.VALID_GRIPPERS:
+            # Check that target_object is present
+            if not action.target_object:
                 raise PlanValidationError(
-                    f"Invalid gripper command at step {index + 1}: {action.gripper}"
+                    f"Missing target_object at step {idx + 1}"
                 )
 
-            if not action.target_object or not action.target_object.strip():
-                raise PlanValidationError(
-                    f"Invalid object reference at step {index + 1}: target_object is empty."
-                )
-
-            if not action.target_location or not action.target_location.strip():
-                raise PlanValidationError(
-                    f"Invalid location reference at step {index + 1}: target_location is empty."
-                )
-
-            step_key = (action.action_type, action.target_object.lower())
-            if step_key in seen_steps:
-                raise PlanValidationError(
-                    f"Duplicate step detected at step {index + 1}: {action.action_type} {action.target_object}"
-                )
-            seen_steps.add(step_key)
+            # Additional checks can be added here (e.g., object exists in scene)

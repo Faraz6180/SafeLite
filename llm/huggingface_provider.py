@@ -1,89 +1,97 @@
-"""Hugging Face provider implementation using the official HTTP API."""
+"""
+HuggingFace LLM provider implementation.
+"""
 
 from __future__ import annotations
 
 import json
-from typing import Any
-
-from planner.models import ActionPlan
+from typing import Any, Dict, Optional
 
 from .base import BaseLLMProvider, LLMProviderError
 from .config import LLMConfig
-from .prompt_builder import PromptBuilder
-from .response_parser import ResponseParser
+
+try:
+    from transformers import pipeline, AutoTokenizer, AutoModelForCausalLM
+except ImportError:
+    pipeline = None
+    AutoTokenizer = None
+    AutoModelForCausalLM = None
 
 
 class HuggingFaceProvider(BaseLLMProvider):
-    """Generate plans using the Hugging Face Inference API."""
+    """LLM provider using HuggingFace models (local or inference API)."""
 
-    def __init__(self, config: LLMConfig | None = None, api_key: str | None = None, http_client: Any | None = None) -> None:
-        cfg = config or LLMConfig(provider="huggingface")
-        cfg.api_key = api_key or cfg.api_key
-        super().__init__(cfg)
-        self.http_client = http_client or self._default_http_client()
-        self.prompt_builder = PromptBuilder()
-        self.parser = ResponseParser()
-
-    def generate_plan(self, instruction: str) -> ActionPlan:
-        if not self.config.api_key:
-            raise LLMProviderError("Hugging Face API key is missing.")
-
-        prompt = self.prompt_builder.build(instruction)
-        payload = {
-            "inputs": f"{prompt.system_prompt}\n{prompt.developer_prompt}\n{prompt.user_prompt}",
-            "parameters": {"max_new_tokens": self.config.max_tokens, "temperature": self.config.temperature},
-        }
-        try:
-            response = self.http_client.post_json(
-                f"https://api-inference.huggingface.co/models/{self.config.model_name or 'gpt2'}",
-                {"Authorization": f"Bearer {self.config.api_key}", "Content-Type": "application/json"},
-                payload,
-            )
-        except TimeoutError as exc:
-            raise LLMProviderError("Hugging Face request timed out.") from exc
-        except Exception as exc:
-            raise LLMProviderError(f"Hugging Face request failed: {exc}") from exc
-
-        if isinstance(response, dict) and "error" in response:
-            raise LLMProviderError(f"Hugging Face provider error: {response['error']}")
-
-        if isinstance(response, list):
-            content = response[0].get("generated_text", "") if response and isinstance(response[0], dict) else ""
-        else:
-            content = response.get("generated_text", "") if isinstance(response, dict) else str(response)
-
-        return self.parser.parse(content)
-
-    def health_check(self) -> bool:
-        if not self.config.api_key:
-            return False
-        try:
-            self.http_client.post_json(
-                f"https://api-inference.huggingface.co/models/{self.config.model_name or 'gpt2'}",
-                {"Authorization": f"Bearer {self.config.api_key}", "Content-Type": "application/json"},
-                {"inputs": "hi"},
-            )
-        except Exception:
-            return False
-        return True
-
-    def validate_response(self, payload: Any) -> ActionPlan:
-        return self.parser.parse(payload)
-
-    class _DefaultHTTPClient:
-        def post_json(self, url: str, headers: dict[str, str], payload: dict[str, object]) -> object:
-            import urllib.request
-            import urllib.error
-
-            data = json.dumps(payload).encode("utf-8")
-            req = urllib.request.Request(url, data=data, headers=headers, method="POST")
+    def __init__(self, config: LLMConfig) -> None:
+        self.config = config
+        self.pipeline = None
+        if pipeline is not None:
             try:
-                with urllib.request.urlopen(req, timeout=30) as response:
-                    return json.load(response)
-            except urllib.error.HTTPError as exc:
-                return {"error": {"message": exc.read().decode("utf-8")}}
-            except urllib.error.URLError as exc:
-                raise TimeoutError(str(exc.reason)) from exc
+                self.pipeline = pipeline(
+                    "text-generation",
+                    model=config.model_name or "microsoft/phi-3-mini-4k-instruct",
+                    device_map="auto",
+                    max_new_tokens=config.max_tokens
+                )
+            except Exception as e:
+                raise LLMProviderError(f"Failed to load HF model: {e}")
 
-    def _default_http_client(self) -> Any:
-        return self._DefaultHTTPClient()
+    def generate_plan(self, instruction: str) -> Dict[str, Any]:
+        """Generate a plan using HuggingFace."""
+        if self.pipeline is None:
+            raise LLMProviderError("HuggingFace pipeline not initialized. Check dependencies.")
+
+        prompt = self._build_prompt(instruction)
+
+        try:
+            response = self.pipeline(
+                prompt,
+                temperature=self.config.temperature,
+                max_new_tokens=self.config.max_tokens,
+                return_full_text=False
+            )
+            raw_text = response[0]['generated_text'].strip()
+            # Extract JSON from the response (might contain extra text)
+            parsed = json.loads(raw_text)
+            return self.validate_response(parsed)
+        except Exception as e:
+            raise LLMProviderError(f"HF generation failed: {e}")
+
+    def validate_response(self, raw_response: Dict[str, Any]) -> Dict[str, Any]:
+        """Validate the raw response."""
+        if not isinstance(raw_response, dict):
+            raise LLMProviderError("Response is not a dictionary.")
+        if 'goal' not in raw_response:
+            raise LLMProviderError("Missing 'goal' in response.")
+        if 'actions' not in raw_response:
+            raise LLMProviderError("Missing 'actions' in response.")
+        if not isinstance(raw_response['actions'], list):
+            raise LLMProviderError("'actions' must be a list.")
+        return raw_response
+
+    def _build_prompt(self, instruction: str) -> str:
+        """Build the prompt for HuggingFace."""
+        return f"""
+You are a robot planner for a Meta-World manipulation environment.
+
+Given the instruction: "{instruction}"
+
+Return a JSON object with:
+- "goal": a string describing the overall goal.
+- "actions": a list of objects, each with:
+    - "action_type": one of ["move_to", "pick", "place", "open", "close", "push"]
+    - "target_object": the name of the object (e.g., "red_block", "green_platform")
+    - "gripper": one of ["open", "closed", "hold"] (optional)
+
+Example:
+{{
+    "goal": "pick up the red block and place it on the green platform",
+    "actions": [
+        {{"action_type": "move_to", "target_object": "red_block", "gripper": "open"}},
+        {{"action_type": "pick", "target_object": "red_block", "gripper": "closed"}},
+        {{"action_type": "move_to", "target_object": "green_platform", "gripper": "hold"}},
+        {{"action_type": "place", "target_object": "green_platform", "gripper": "open"}}
+    ]
+}}
+
+Return only the JSON object, no extra text.
+"""

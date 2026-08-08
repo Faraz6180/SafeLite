@@ -1,93 +1,64 @@
-"""Deterministic replanning logic for recovery after failures."""
-
+"""
+Replanner module for generating new plans after failures.
+"""
 from __future__ import annotations
 
-from planner.models import Action, ActionPlan
+from typing import Optional, Any
 
-from .models import FailureReport, ReplannedAction, RecoveryStrategy
-from .exceptions import SelfCorrectionError
+from self_correction.models import ReflectionReport
 
 
 class Replanner:
-    """Create a corrected action plan from a failure report."""
+    """
+    Replanner that generates a new instruction based on reflection.
+    """
 
-    def __init__(self, fallback_object: str = "object") -> None:
-        self.fallback_object = fallback_object
+    def __init__(self, llm_provider: Optional[Any] = None):
+        """
+        Initialize the Replanner.
 
-    def replan(self, failure: FailureReport, current_plan: ActionPlan | None = None) -> list[ReplannedAction]:
-        """Create a deterministic replacement action list."""
-        if failure.failure_type == "invalid_plan" and current_plan is None:
-            raise SelfCorrectionError("A current plan is required for invalid plan recovery")
+        Args:
+            llm_provider: Optional LLM provider for generating new instructions.
+        """
+        self.llm_provider = llm_provider
 
-        if failure.failure_type == "collision":
-            return [
-                ReplannedAction(
-                    action_type="abort",
-                    target_object=self.fallback_object,
-                    target_location="safe_zone",
-                    gripper="open",
-                    reason="Unsafe collision detected; stop and isolate the task.",
-                )
-            ]
+    def replan(self, instruction: str, reflection: ReflectionReport) -> str:
+        """
+        Generate a new instruction based on the reflection.
 
-        if failure.failure_type == "timeout":
-            return [
-                ReplannedAction(
-                    action_type="retry",
-                    target_object=current_plan.actions[-1].target_object if current_plan else self.fallback_object,
-                    target_location=current_plan.actions[-1].target_location if current_plan else "default",
-                    gripper="close",
-                    reason="Retry the last action with a conservative adjustment.",
-                )
-            ]
+        Args:
+            instruction: The original instruction.
+            reflection: The reflection report containing the recommended action.
 
-        if failure.failure_type == "unknown_object":
-            return [
-                ReplannedAction(
-                    action_type="replace_target",
-                    target_object=self.fallback_object,
-                    target_location="default",
-                    gripper="open",
-                    reason="The original target object is not recognized.",
-                )
-            ]
+        Returns:
+            A new instruction string.
+        """
+        # If we have an LLM provider, use it to generate a corrected instruction.
+        if self.llm_provider is not None:
+            try:
+                # Use the LLM to generate a new instruction based on the reflection.
+                prompt = f"""
+The original instruction was: "{instruction}"
 
-        return [
-            ReplannedAction(
-                action_type="pause",
-                target_object=self.fallback_object,
-                target_location="default",
-                gripper="open",
-                reason="Unable to infer a safe recovery action; pause execution.",
-            )
-        ]
+The execution failed. Here is the reflection:
+- Summary: {reflection.summary}
+- Why it failed: {reflection.why_failed}
+- Recommended action: {reflection.recommended_action}
 
-    def build_strategy(self, failure: FailureReport) -> RecoveryStrategy:
-        """Return a high-level recovery strategy."""
-        if failure.failure_type == "collision":
-            return RecoveryStrategy(
-                name="terminate_safely",
-                description="Stop the task immediately and await intervention.",
-                recoverable=False,
-                replan_required=False,
-            )
-        if failure.failure_type == "timeout":
-            return RecoveryStrategy(
-                name="retry_once",
-                description="Retry the same action once with more conservative settings.",
-                recoverable=True,
-                replan_required=False,
-            )
-        if failure.failure_type == "invalid_plan":
-            return RecoveryStrategy(
-                name="replan",
-                description="Construct a corrected sequence of actions.",
-                recoverable=True,
-                replan_required=True,
-            )
-        return RecoveryStrategy(
-            name="defer",
-            description="Pause and defer the task for a safer later attempt.",
-            recoverable=True,
-            replan_required=True,
-        )
+Please provide a corrected instruction that addresses the failure.
+"""
+                response = self.llm_provider.generate_plan(prompt)
+                # Extract the instruction from the response if possible
+                if isinstance(response, dict) and 'goal' in response:
+                    return response['goal']
+                elif isinstance(response, str):
+                    return response
+                else:
+                    # Fallback: append the recommendation to the original instruction
+                    return f"{instruction} (Correction: {reflection.recommended_action})"
+            except Exception:
+                # Fallback if LLM fails
+                return f"{instruction} (Correction: {reflection.recommended_action})"
+        else:
+            # Simple fallback: append the recommended action to the instruction
+            return f"{instruction} (Correction: {reflection.recommended_action})"

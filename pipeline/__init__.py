@@ -1,7 +1,6 @@
-"""Execution pipeline integration package for SafeLite."""
+"""
+Pipeline module for SafeLite.
+"""
+from .orchestrator import SafeLiteExecutionPipeline
 
-from .controller import PipelineController
-from .orchestrator import PipelineOrchestrator
-from .pipeline import SafeLiteExecutionPipeline
-
-__all__ = ["PipelineController", "PipelineOrchestrator", "SafeLiteExecutionPipeline"]
+__all__ = ["SafeLiteExecutionPipeline"]

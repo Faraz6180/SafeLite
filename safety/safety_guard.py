@@ -1,64 +1,49 @@
-"""SafetyGuard: a validation layer for planner-produced action plans.
-
-The safety guard never executes actions. It evaluates the action plan, records
-any violations, and returns a structured safety report.
 """
-
-from __future__ import annotations
-
-import logging
-from typing import List
-
-from planner.models import Action, ActionPlan
-
-from .exceptions import SafetyViolationError
-from .models import SafetyResult
-from .rules import SafetyRules
-from .validator import SafetyValidator
-
-logger = logging.getLogger(__name__)
+Safety guard for SafeLite.
+Validates plans against safety rules.
+"""
+from typing import List, Set
+from planner.models import ActionPlan
+from safety.models import SafetyResult
 
 
 class SafetyGuard:
-    """Validate planner-generated action plans before execution.
+    """Safety guard that checks plans against allowed actions and objects."""
 
-    The safety guard accepts an ActionPlan and returns a structured validation
-    result indicating whether the plan is approved, rejected, or contains
-    warnings.
-    """
-
-    def __init__(self, rules: SafetyRules | None = None) -> None:
-        self.rules = rules or SafetyRules()
-        self.validator = SafetyValidator(rules=self.rules)
-
-    def validate_action(self, action: Action) -> None:
-        """Validate a single action and raise on violation."""
-        self.validator.validate_action(action)
+    ALLOWED_ACTION_TYPES = {"move_to", "pick", "place", "open", "close", "push", "move"}
 
     def validate_plan(self, plan: ActionPlan) -> SafetyResult:
-        """Validate an entire ActionPlan and return a safety report."""
-        result = SafetyResult(approved=True, violations=[], warnings=[], validated_actions=plan)
+        """
+        Validate a plan.
 
-        try:
-            self.validator.validate_plan(plan)
-            logger.info("Plan approved: %s", plan.goal)
-        except SafetyViolationError as exc:
-            result.approved = False
-            result.violations.append(str(exc))
-            logger.warning("Plan rejected: %s", exc)
+        Args:
+            plan: ActionPlan to validate.
 
-        return result
+        Returns:
+            SafetyResult indicating validity.
+        """
+        violations = []
 
-    def generate_report(self, result: SafetyResult) -> str:
-        """Generate a human-readable report from a safety result."""
-        if result.approved:
-            return "SAFE\nNo violations detected."
+        # Check each action
+        for idx, action in enumerate(plan.actions):
+            # Check action type
+            if action.action_type not in self.ALLOWED_ACTION_TYPES:
+                violations.append(f"Unknown action type at step {idx+1}: {action.action_type}")
 
-        lines = ["UNSAFE"]
-        for index, violation in enumerate(result.violations, start=1):
-            lines.append(f"Violation {index}: {violation}")
-        if result.warnings:
-            lines.append("Warnings:")
-            for warning in result.warnings:
-                lines.append(f"- {warning}")
-        return "\n".join(lines)
+            # Check that target_object is not empty
+            if not action.target_object:
+                violations.append(f"Missing target_object at step {idx+1}")
+
+            # Add more checks as needed (e.g., object exists in scene)
+
+        if violations:
+            return SafetyResult(
+                valid=False,
+                reason="; ".join(violations),
+                violations=violations
+            )
+        else:
+            return SafetyResult(
+                valid=True,
+                reason="All actions are safe."
+            )

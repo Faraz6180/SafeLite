@@ -1,6 +1,6 @@
 # SafeLite
 
-## Research Motivation...
+## Research Motivation....
 
 SafeLite is a research-oriented project foundation for studying safe, structured, and verifiable autonomy workflows. The repository is designed to support experimentation around planning, safety reasoning, execution, simulation, and evaluation without prematurely committing to specific algorithms or implementation choices.
 
